@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment / virtualenv
+.env/
+.venv/
+env/
+venv/
+bin/
+
+./_imports/pytorch
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and temp files
+*.log
+*.sqlite3
+*.pyc
+*.pyo
+*.pyd
