@@ -10,7 +10,7 @@ env/
 venv/
 bin/
 
-./_imports/pytorch
+./_imports/pytorch/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
