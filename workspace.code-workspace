@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "backend"
+		},
+		{
+			"path": "model_backend"
+		},
+		{
+			"path": "frontend"
+		}
+	],
+	"settings": {},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "C#: backend Debug",
+				"type": "dotnet",
+				"request": "launch",
+				"projectPath": "${workspaceFolder:backend}/backend.csproj"
+			}
+		]
+	}
+}
