@@ -6,9 +6,15 @@ public static class ModelBackend
     private static List<ModelSession> activeSessions;
 
 
-    public static void Setup()
+    public static async Task Setup()
     {
         activeSessions = new List<ModelSession>();
+        var entries = await GetAllActivePythonModels();
+
+        foreach (var entry in entries)
+        {
+            activeSessions.Add(new ModelSession(entry.name, entry.id));
+        }
     }
 
 
@@ -56,7 +62,7 @@ public static class ModelBackend
 
         List<Dictionary<string, string>>? active = await res.Content.ReadFromJsonAsync<List<Dictionary<string, string>>>();
         List<(string, string)> toReturn = new List<(string, string)>(active?.Count ?? 0);
-        
+
         if (active != null)
             foreach (var model in active)
             {
@@ -68,7 +74,7 @@ public static class ModelBackend
                 Console.WriteLine(modelName + "  : " + modelId);
                 toReturn.Add((modelName, modelId));
             }
-        
+
         return toReturn.ToArray();
     }
 
@@ -83,8 +89,11 @@ public static class ModelBackend
         return activeSessions.ToArray();
     }
 
-    private struct ActivePythonModels
+    public static async Task<string[]> GetModelTypes()
     {
-        
+        using HttpClient client = new HttpClient();
+        var res = await client.GetAsync($"{PYTHON_ENDPOINT}/models");
+
+        return await res.Content.ReadFromJsonAsync<string[]>();
     }
 }

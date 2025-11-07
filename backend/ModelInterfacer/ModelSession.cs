@@ -8,6 +8,7 @@ public class ModelSession
     public string modelName { set; get; }
     public string modelId { set; get; }
 
+
     public ModelSession(string modelName, string modelId)
     {
         this.modelName = modelName;
