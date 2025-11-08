@@ -6,11 +6,15 @@ namespace Nexx.Models.Backend;
 
 public class ModelSession : IDisposable
 {
+    public const string ENDING_TOKEN = "[[END]]";
+
+
     public string modelName { set; get; }
     public Guid modelId { set; get; }
 
     private CancellationTokenSource sessionToken;
-    List<Thread> activeSockets = new List<Thread>();
+
+    private List<MessageEntry> messages;
 
 
     public ModelSession(string modelName, Guid modelId)
@@ -18,41 +22,9 @@ public class ModelSession : IDisposable
         this.modelName = modelName;
         this.modelId = modelId;
 
+        messages = new List<MessageEntry>();
         sessionToken = new CancellationTokenSource();
     }
-
-
-    public async Task Prompt(string prompt)
-    {
-        var payload = new
-        {
-            model_id = modelId,
-            prompt = prompt
-        };
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{ModelBackend.PYTHON_ENDPOINT}/prompt")
-        {
-            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-        };
-
-        using HttpClient client = new HttpClient();
-
-        using var response = await client.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead
-        );
-
-        response.EnsureSuccessStatusCode();
-
-        using var stream = await response.Content.ReadAsStreamAsync();
-        using var reader = new StreamReader(stream);
-
-        while (!reader.EndOfStream)
-        {
-            var line = await reader.ReadLineAsync();
-        }
-    }
-
 
     public async Task AcceptSocket(WebSocketManager socketReq)
     {
@@ -60,64 +32,155 @@ public class ModelSession : IDisposable
         {
             await HandleSocket(socket);
         }
-
     }
 
     private async Task HandleSocket(WebSocket socket)
     {
-        await socket.SendAsync(UTF8Encoding.UTF8.GetBytes("Hello"), WebSocketMessageType.Text, true, sessionToken.Token);
         var buffer = new byte[1024 * 4];
+
+        MemoryStream streamingMessage = new MemoryStream();
+        CancellationTokenSource socketToken = new CancellationTokenSource();
 
         while (socket.State == WebSocketState.Open && !sessionToken.IsCancellationRequested)
         {
-            var _res = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), sessionToken.Token);
-            string res = UTF8Encoding.UTF8.GetString(buffer, 0, _res.Count);
+            await streamingMessage.FlushAsync();
 
-            var payload = new
-            {
-                model_id = modelId,
-                prompt = res
-            };
+            WebSocketReceiveResult response = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), sessionToken.Token);
+            string userInput = Encoding.UTF8.GetString(buffer, 0, response.Count);
 
-            var request = new HttpRequestMessage(HttpMethod.Post, $"{ModelBackend.PYTHON_ENDPOINT}/prompt")
-            {
-                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-            };
+            if (string.IsNullOrEmpty(userInput))
+                continue;
 
-            using HttpClient client = new HttpClient();
+            await SeekPrompt(socketToken.Token, GenerateMessageConext(userInput), ProcessToken);
+            await socket.SendAsync(Encoding.UTF8.GetBytes(ENDING_TOKEN), WebSocketMessageType.Text, true, sessionToken.Token);
 
-            using var response = await client.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead
-            );
+            RecordMessage(userInput, true);
+            RecordMessage(Encoding.UTF8.GetString(streamingMessage.ToArray()), false);
 
-            response.EnsureSuccessStatusCode();
-
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var reader = new StreamReader(stream);
-
-            var buffer2 = new byte[256];
-            int read;
-
-            while ((read = await stream.ReadAsync(buffer2, 0, buffer2.Length)) > 0)
-            {
-                await socket.SendAsync(
-                    new ArraySegment<byte>(buffer2, 0, read),
-                    WebSocketMessageType.Text,
-                    true,
-                    sessionToken.Token
-                );
-            }
-
-            await socket.SendAsync(UTF8Encoding.UTF8.GetBytes("[[END]]"), WebSocketMessageType.Text, true, sessionToken.Token);
+            await streamingMessage.FlushAsync();
         }
+
+        await socketToken.CancelAsync();
 
         if (socket.State != WebSocketState.Closed)
             await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+
+        async Task ProcessToken(ArraySegment<byte> token)
+        {
+            await socket.SendAsync(token, WebSocketMessageType.Text, true, sessionToken.Token);
+            await streamingMessage.WriteAsync(token);
+        }
     }
+
+
+    private async Task SeekPrompt(CancellationToken cancellationToken, StringBuilder prompt, Func<ArraySegment<byte>, Task> onProcessToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{ModelBackend.PYTHON_ENDPOINT}/prompt")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { model_id = modelId, prompt = prompt.ToString() }), Encoding.UTF8, "application/json")
+        };
+
+        using HttpClient client = new HttpClient();
+
+        using var response = await client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken
+        );
+
+        response.EnsureSuccessStatusCode();
+
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        var streamBuffer = new byte[256];
+        int bytesRead;
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested && (bytesRead = await stream.ReadAsync(streamBuffer, 0, streamBuffer.Length)) > 0)
+            {
+                await onProcessToken(new ArraySegment<byte>(streamBuffer, 0, bytesRead));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+
+        }
+    }
+
+
+    private void RecordMessage(string msg, bool isUser)
+    {
+        MessageEntry m = new MessageEntry()
+        {
+            isUser = !isUser,
+            content = msg,
+            timestamp = DateTime.UtcNow
+        };
+
+        messages.Add(m);
+        Console.WriteLine(m.ToString());
+    }
+
+
+    private StringBuilder GenerateMessageConext(string userInput)
+    {
+        int contextLimit = 10_000;
+        int spentContext = 0;
+
+        StringBuilder footer = new StringBuilder(MessageEntry.FormatPrompt(userInput, true));
+        footer.AppendLine(MessageEntry.FormatPrompt(string.Empty, false));
+
+        StringBuilder sb = new StringBuilder("system:You are a helpful assistant that answers questions clearly and politely.");
+
+        spentContext += footer.Length;
+        spentContext += sb.Length;
+
+        if (messages.Count > 0)
+        {
+            for (int i = messages.Count - 1; i >= 0; i--)
+            {
+                string purposed = messages[i].GetPrompt();
+
+                if (spentContext + purposed.Length > contextLimit)
+                    break;
+
+                sb.AppendLine(purposed);
+            }
+        }
+
+        Console.WriteLine(sb.ToString());
+        return sb;
+    }
+
+
 
     public void Dispose()
     {
         sessionToken.Cancel();
+    }
+
+
+
+    struct MessageEntry
+    {
+        public bool isUser;
+        public string content;
+        public DateTime timestamp;
+
+
+        public override string ToString()
+        {
+            return $"[{(isUser ? "USER" : "AGENT")}] {content}";
+        }
+
+        public string GetPrompt()
+            => MessageEntry.FormatPrompt(content, isUser);
+
+        public static string FormatPrompt(string msg, bool isUser)
+        {
+            return $"{(isUser ? "USER:" : "ai")}:{msg}";
+        }
     }
 }
