@@ -2,7 +2,9 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+
 using Nexx.Models.Backend;
+using Nexx.Models.Backend.Socket;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,4 +37,8 @@ if (app.Environment.IsDevelopment())
 app.UseCors("AllowReact");
 app.UseHttpsRedirection();
 app.MapControllers();
+
+app.UseWebSockets();
+app.Map("/{modelId}/ws", ModelSocket.ActiveSocket);
+
 app.Run();

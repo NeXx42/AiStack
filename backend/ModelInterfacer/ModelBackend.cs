@@ -3,7 +3,7 @@ namespace Nexx.Models.Backend;
 public static class ModelBackend
 {
     public const string PYTHON_ENDPOINT = "http://localhost:8000";
-    private static List<ModelSession> activeSessions;
+    private static List<ModelSession>? activeSessions;
 
 
     public static async Task Setup()
@@ -26,53 +26,36 @@ public static class ModelBackend
         var startResponse = await client.PostAsJsonAsync($"{PYTHON_ENDPOINT}/start", startPayload);
         startResponse.EnsureSuccessStatusCode();
 
-        string id = await startResponse.Content.ReadAsStringAsync();
-        id = id.Replace("\u0022", "");
+        string idStr = await startResponse.Content.ReadAsStringAsync();
+        Guid id = Guid.Parse(idStr.Replace("\u0022", ""));
 
         ModelSession newSession = new ModelSession(modelName, id);
-        activeSessions.Add(newSession);
+        activeSessions!.Add(newSession);
 
         return newSession;
     }
 
-    public static async Task<ModelSession> StartOrGetSession(string modelName)
-    {
-        ModelSession? session = GetActiveSession(modelName);
-
-        if (session == null)
-        {
-            (string _modelName, string _modelId) = (await GetAllActivePythonModels()).FirstOrDefault(x => x.name == modelName);
-
-            if (!string.IsNullOrEmpty(_modelName) && !string.IsNullOrEmpty(_modelId))
-            {
-                session = new ModelSession(_modelName, _modelId);
-                activeSessions.Add(session);
-
-                return session;
-            }
-        }
-
-        return await StartModelSession(modelName);
-    }
-
-    private static async Task<(string name, string id)[]> GetAllActivePythonModels()
+    private static async Task<(string name, Guid id)[]> GetAllActivePythonModels()
     {
         using HttpClient client = new HttpClient();
         var res = await client.GetAsync($"{PYTHON_ENDPOINT}/active");
 
         List<Dictionary<string, string>>? active = await res.Content.ReadFromJsonAsync<List<Dictionary<string, string>>>();
-        List<(string, string)> toReturn = new List<(string, string)>(active?.Count ?? 0);
+        List<(string, Guid)> toReturn = new List<(string, Guid)>(active?.Count ?? 0);
 
         if (active != null)
             foreach (var model in active)
             {
                 string modelName = model.Keys.First();
                 string modelId = model.Values.First();
+
                 if (string.IsNullOrEmpty(modelName) || string.IsNullOrEmpty(modelId))
                     continue;
 
-                Console.WriteLine(modelName + "  : " + modelId);
-                toReturn.Add((modelName, modelId));
+                if (!Guid.TryParse(modelId, out Guid id))
+                    continue;
+
+                toReturn.Add((modelName, id));
             }
 
         return toReturn.ToArray();
@@ -80,13 +63,21 @@ public static class ModelBackend
 
 
 
-    public static ModelSession? GetActiveSession(string modelName)
-        => activeSessions.FirstOrDefault(s => s.modelName == modelName);
+    public static ModelSession? GetActiveSession(Guid modelId)
+        => activeSessions!.FirstOrDefault(s => s.modelId == modelId);
 
+
+    public static bool GetActiveSession(Guid modelName, out ModelSession session)
+    {
+#pragma warning disable CS8601 // Possible null reference assignment.
+        session = GetActiveSession(modelName);
+#pragma warning restore CS8601 // Possible null reference assignment.
+        return session != null;
+    }
 
     public static ModelSession[] GetActiveModels()
     {
-        return activeSessions.ToArray();
+        return activeSessions!.ToArray();
     }
 
     public static async Task<string[]> GetModelTypes()
