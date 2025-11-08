@@ -8,7 +8,6 @@ __pycache__/
 .venv/
 env/
 venv/
-bin/
 
 ./_imports/pytorch/
 
@@ -21,3 +20,13 @@ bin/
 *.pyc
 *.pyo
 *.pyd
+
+# models code
+bin/**
+!bin/models/
+
+!bin/models/gpt_large
+!bin/models/gpt_large/gpt_large.py
+
+!bin/models/llama_3_1
+!bin/models/llama_3_1/llama_3_1.py

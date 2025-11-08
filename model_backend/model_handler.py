@@ -2,6 +2,8 @@ import torch
 import uuid
 
 from bin.models.gpt_large.gpt_large import model_gpt_large
+from bin.models.llama_3_1.llama_3_1 import model_llama_3dot1
+
 
 class model_handler:
 
@@ -11,8 +13,12 @@ class model_handler:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        model = model_gpt_large
-        self.all_models[model.model_name] = model
+        self.add_model(model_gpt_large)
+        self.add_model(model_llama_3dot1)
+        
+
+    def add_model(self, modelType):
+        self.all_models[modelType.model_name] = modelType
 
 
     def get_all_models(self):
